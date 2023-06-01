@@ -1,72 +1,64 @@
 clear; close all; clc;
 
 % Constants
-g = 9.81; 
-m = 4;                % mass (kgs)
-P_in = 110 * 6894.76; % maximum pressure (paa)
-P_out = 101325;
-rho_air = 1.225;
-d_nozzle = 0.005;     % diameter of "nozzle"
-A_nozzle = pi*(d_nozzle/2)^2; 
+L = 0.6;            % length of thrust platform
+m = 4;              % mass (kg) 
+I = m * L^2 / 12;   % moment of inertia
+P = 110*6894.76;    % convert max psi to Pa
+r = 0.005 / 2;      % radius of "nozzle" (m)
+A = pi * r^2;       % area of "nozzle"
+F_max = P * A;      % max thrust, simplified
+g = 9.81;
+dt = 0.01;          % time step
 
-% IC's
-x0 = 0;
-y0 = 0;
-vx0 = 0;
-vy0 = 1;
-derror = 0;
+% Initial state - simplifed by only doing 1axis 
+y = 0; % see how controller reacts when changing these values 
+v_y = 0;
 
-V_exit = sqrt((2*(P_in - P_out))/rho_air);       % Exit velocity
-F_thrust_one = 2 * A_nozzle * rho_air * V_exit;
-tspan = [0, 10];                                 % 10 seconds sim
-z0 = [x0; y0; vx0; vy0; derror;];                 % Initial state vector
+% Desired position
+y_desired = 1.0; 
 
-% ODE45 to solve the system
-[t, z] = ode45(@(t, z) dynamics(t, z, m, g, F_thrust_one), tspan, z0);
+% Set up PID controller
+Kp = 10;
+Ki = 6;
+Kd = 10;
 
-% Get the position and velocity
-x = z(:, 1);
-y = z(:, 2);
-vx = z(:, 3);
-vy = z(:, 4);
+integral_error = 0; % set inital errors to zero
+previous_error = y_desired - y;
 
-% Plot the trajectory
-figure;
-grid on; hold on;
-plot(t, y);
-xlabel('Time (s)'); ylabel('Position (m)');
-legend('Y Position');
-title('Drone Altitude');
+% Storage for plotting
+time = 0;
+y_position = y;
+F_total_data = 0;
 
-
-function zdot = dynamics(t, z, m, g, F_thrust_one)
-    % Parse the state vector
-    x = z(1);
-    y = z(2);
-    vx = z(3);
-    vy = z(4);
-    error = z(5);
-    
-    % Desired y position and velocity
-    y_desired = 0;
-    v_desired = 0;
-    
-    % PID controller gains - tune parameters
-    Kp = 5;
-    Ki = 5; 
-    Kd = 10;
-    
-    % PID control for vertical position and velocity
+for i = 1:1000
+    % Calc the PID control
     error = y_desired - y;
-    derror = v_desired - vy;
-    error = error + error; % update integral term
-    u = Kp*error + Ki*error + Kd*derror; % control input
+    integral_error = integral_error + error * dt;
+    derivative_error = (error - previous_error) / dt;
+    F_total = Kp * error + Ki * integral_error + Kd * derivative_error;
     
-    % Calculate acceleration
-    ax = 0;           % Assume no horizontal movement
-    ay = (m*g + u)/m; % Acceleration in y direction
+    % Clamp the thrust output to stay within range
+    F_total = max(0, min(F_total, F_max));
+    F_total = 4 * F_total;   % simplifed
     
-    % Return the derivative of the state
-    zdot = [vx; vy; ax; ay; error];
+    % Update state w/ simplifed eqs
+    y = y + v_y * dt;
+    v_y = v_y + (1 / m) * F_total * dt - g * dt;
+
+    % Update previous error
+    previous_error = error;
+
+    % Store the time & position data
+    time = [time; i * dt];
+    y_position = [y_position; y];
+    F_total_data = [F_total_data; F_total];
 end
 
+% Plot Y-position 
+figure;
+hold on; grid on;
+plot(time, y_position, time, y_desired * ones(size(time)), '--');
+title('Altitude vs Time');
+xlabel('Time (sec)'); ylabel('Altitude (m)');
+legend('Actual Altitude', 'Desired Altitude');
